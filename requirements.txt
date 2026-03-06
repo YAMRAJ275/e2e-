@@ -8,14 +8,3 @@ python-dotenv==1.1.1
 psutil==6.1.1
 webdriver-manager>=4.0.0
 urllib3>=2.0.0
-pathlib
-hashlib
-json
-threading
-time
-os
-subprocess
-gc
-tempfile
-datetime
-uuid
