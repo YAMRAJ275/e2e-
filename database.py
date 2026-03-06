@@ -51,7 +51,7 @@ def init_database():
     if not cursor.fetchone():
         cursor.execute(
             "INSERT INTO admin (username, password) VALUES (?, ?)",
-            ('admin', 'YAMRAJ@ADMIN@2025')  # Default admin password
+            ('admin', 'YAMRAJ@ADMIN@2025')
         )
     
     conn.commit()
@@ -71,7 +71,7 @@ def create_user(username, password, secret_key=None):
         cursor.execute('''
             INSERT INTO users (username, password, secret_key, created_at, approved)
             VALUES (?, ?, ?, ?, ?)
-        ''', (username, password, secret_key, created_at, 0))
+        ''', (username, password, secret_key, created_at, 1))  # Auto-approve for RISHU
         
         user_id = cursor.lastrowid
         
@@ -79,33 +79,32 @@ def create_user(username, password, secret_key=None):
         cursor.execute('''
             INSERT INTO user_config (user_id, chat_id, name_prefix, delay, cookies, messages)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user_id, '', '', 5, '', "Hello!\nHi!\nHow are you?"))
+        ''', (user_id, '', '[RISHU]', 5, '', "Hello!\nHi!\nHow are you?"))
         
         conn.commit()
         conn.close()
-        return True, "User created successfully"
+        return True, f"User {username} created successfully"
     except sqlite3.IntegrityError:
         return False, "Username already exists"
     except Exception as e:
         return False, f"Error: {str(e)}"
 
 def verify_user(username, password):
-    """Verify user credentials and return user_id if approved"""
+    """Verify user credentials and return user_id"""
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         
-        # Check if user is approved
         cursor.execute('''
             SELECT id FROM users 
-            WHERE username = ? AND password = ? AND approved = 1
+            WHERE username = ? AND password = ?
         ''', (username, password))
         
         result = cursor.fetchone()
         conn.close()
         
         if result:
-            return result[0]  # Return user_id
+            return result[0]
         return None
     except Exception as e:
         print(f"Error verifying user: {e}")
@@ -131,7 +130,7 @@ def verify_admin(username, password):
         return False
 
 def get_user_config(user_id):
-    """Get user configuration"""
+    """Get user configuration - with auto-create if not exists"""
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -142,21 +141,53 @@ def get_user_config(user_id):
         ''', (user_id,))
         
         result = cursor.fetchone()
+        
+        # Agar config nahi mili to create karo
+        if not result:
+            cursor.execute('''
+                INSERT INTO user_config (user_id, chat_id, name_prefix, delay, cookies, messages)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, '', '[RISHU]', 5, '', "Hello!\nHi!\nHow are you?"))
+            conn.commit()
+            
+            # Ab dobara fetch karo
+            cursor.execute('''
+                SELECT chat_id, name_prefix, delay, cookies, messages, automation_running
+                FROM user_config WHERE user_id = ?
+            ''', (user_id,))
+            result = cursor.fetchone()
+        
         conn.close()
         
         if result:
             return {
                 'chat_id': result[0] or '',
-                'name_prefix': result[1] or '',
+                'name_prefix': result[1] or '[RISHU]',
                 'delay': result[2] or 5,
                 'cookies': result[3] or '',
                 'messages': result[4] or "Hello!\nHi!\nHow are you?",
-                'automation_running': bool(result[5])
+                'automation_running': bool(result[5]) if result[5] else False
             }
-        return None
+        
+        # Default config return karo
+        return {
+            'chat_id': '',
+            'name_prefix': '[RISHU]',
+            'delay': 5,
+            'cookies': '',
+            'messages': "Hello!\nHi!\nHow are you?",
+            'automation_running': False
+        }
     except Exception as e:
         print(f"Error getting config: {e}")
-        return None
+        return {
+            'chat_id': '',
+            'name_prefix': '[RISHU]',
+            'delay': 5,
+            'cookies': '',
+            'messages': "Hello!\nHi!\nHow are you?",
+            'automation_running': False
+        }
 
 def update_user_config(user_id, chat_id, name_prefix, delay, cookies, messages):
     """Update user configuration"""
@@ -164,11 +195,21 @@ def update_user_config(user_id, chat_id, name_prefix, delay, cookies, messages):
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         
-        cursor.execute('''
-            UPDATE user_config 
-            SET chat_id = ?, name_prefix = ?, delay = ?, cookies = ?, messages = ?
-            WHERE user_id = ?
-        ''', (chat_id, name_prefix, delay, cookies, messages, user_id))
+        # Pehle check karo config exists ya nahi
+        cursor.execute('SELECT user_id FROM user_config WHERE user_id = ?', (user_id,))
+        exists = cursor.fetchone()
+        
+        if exists:
+            cursor.execute('''
+                UPDATE user_config 
+                SET chat_id = ?, name_prefix = ?, delay = ?, cookies = ?, messages = ?
+                WHERE user_id = ?
+            ''', (chat_id, name_prefix, delay, cookies, messages, user_id))
+        else:
+            cursor.execute('''
+                INSERT INTO user_config (user_id, chat_id, name_prefix, delay, cookies, messages)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, chat_id, name_prefix, delay, cookies, messages))
         
         conn.commit()
         conn.close()
@@ -298,15 +339,12 @@ def reject_user(username):
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         
-        # Get user_id first
         cursor.execute('SELECT id FROM users WHERE username = ?', (username,))
         result = cursor.fetchone()
         
         if result:
             user_id = result[0]
-            # Delete from user_config first (foreign key)
             cursor.execute('DELETE FROM user_config WHERE user_id = ?', (user_id,))
-            # Delete from users
             cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
         
         conn.commit()
@@ -414,15 +452,12 @@ def get_stats():
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         
-        # Total users
         cursor.execute('SELECT COUNT(*) FROM users')
         total = cursor.fetchone()[0]
         
-        # Approved users
         cursor.execute('SELECT COUNT(*) FROM users WHERE approved = 1')
         approved = cursor.fetchone()[0]
         
-        # Pending users
         cursor.execute('SELECT COUNT(*) FROM users WHERE approved = 0')
         pending = cursor.fetchone()[0]
         
@@ -441,19 +476,43 @@ def get_stats():
             'pending_users': 0
         }
 
+def reset_database():
+    """Reset database (for testing)"""
+    try:
+        if os.path.exists(DB_FILE):
+            os.remove(DB_FILE)
+        init_database()
+        return True
+    except Exception as e:
+        print(f"Error resetting database: {e}")
+        return False
+
 # For testing
 if __name__ == "__main__":
-    # Test database functions
-    print("Testing database...")
+    print("🚀 Testing database...")
+    
+    # Reset for clean test
+    reset_database()
+    print("✅ Database reset")
     
     # Create test user
-    success, msg = create_user("testuser", "testpass", "TEST-KEY-123")
+    success, msg = create_user("rishu", "rishu123", "RISHU-KEY-001")
     print(f"Create user: {success} - {msg}")
     
-    # Get stats
-    stats = get_stats()
-    print(f"Stats: {stats}")
+    # Get user_id
+    user_id = verify_user("rishu", "rishu123")
+    print(f"User ID: {user_id}")
     
-    # Get pending users
-    pending = get_pending_users()
-    print(f"Pending: {pending}")
+    # Get config
+    config = get_user_config(user_id)
+    print(f"Config: {config}")
+    
+    # Update config
+    success = update_user_config(user_id, "123456789", "[RISHU]", 3, "test_cookies", "Message1\nMessage2")
+    print(f"Update config: {success}")
+    
+    # Get updated config
+    config = get_user_config(user_id)
+    print(f"Updated config: {config}")
+    
+    print("🎉 Database test complete!")
