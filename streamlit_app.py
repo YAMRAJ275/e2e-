@@ -1245,4 +1245,4 @@ else:
     st.session_state.current_page = "main"
     st.rerun()
 
-st.markdown(f'<div class="footer">Made with 💕 by {YAMRAJ} | © 2025</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="footer">Made with 💕 by YAMRAJ X JATIN | © 2026</div>', unsafe_allow_html=True)
